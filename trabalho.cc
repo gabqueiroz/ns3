@@ -18,6 +18,29 @@
  * Author: Sebastien Deronne <sebastien.deronne@gmail.com>
  */
 
+/*
+## BIBLIOTECAS ##
+#1  - command-line: parse de argumentos de simulação via CLI
+#2  - config: permite declarar as funções e classes específicas do NS3
+#3  - uinteger: possibilita declarar uinteger
+#4  - double: possibilita declarar double
+#5  - string: possibilita declarar string   
+#6  - log: depurar as mensagens de log
+#7  - yans-wifi-helper: facilita o trabalho de objetos da camada PHY utilizados pelo modelo YANS
+#8  - ssid: informações para trabalhar com SSID (Service Set Identifier)
+#9  - mobility-helper: lida com a mobilidade inerente ao wifi
+#10 - internet-stack-helper: agrega as funcionalidades da pilha de protocolos IP/TCP/UDP
+#11 - ipv4-address-helper: simplifica a atribuição de endereços IPv4
+#12 - udp-client-server-helper: possibilita criar aplicações que enviam pacotes UDP 
+#13 - packet-sink-helper: permite criar instâncias de PacketSinkApplication nos nós
+#14 - on-off-helper: permite criar instâncias OnOffApplication nos nós
+#15 - ipv4-global-routing-helper: classe auxiliar que adiciona roteamento IPv4 aos objetos
+#16 - packet-sink: classe que permite receber tráfego gerado para determinado IP e porta
+#17 - yans-wifi-channel: utilizada para trabalhar o canal que conecta os objetos da Yans-Wifi
+#18 - flow-monitor: classe para monitorar e reportar fluxo de pacotes durante uma simulação
+#19 - flow-monitor-helper: habilita o monitoramento de flow-monitor
+*/
+
 #include "ns3/command-line.h"
 #include "ns3/config.h"
 #include "ns3/uinteger.h"
@@ -58,19 +81,22 @@
 
 using namespace ns3;
 
+// Definição do componente de log: he-wifi-network
 NS_LOG_COMPONENT_DEFINE ("he-wifi-network");
 
+// Função principal
 int main (int argc, char *argv[])
 {
-  bool udp = true;
-  bool useRts = false;
-  double simulationTime = 10; //seconds
-  double distance = 50.0; //meters
-  double frequency = 5.0; //whether 2.4 or 5.0 GHz
-  int mcs = -1; // -1 indicates an unset value
-  double minExpectedThroughput = 0;
+  bool udp = true; // escolha do protocolo da camada de transporte: UDP/true e TCP/false
+  bool useRts = false; // habilita o mecanismo de controle de colisões em "true"
+  double simulationTime = 10; // tempo de simulação [segundos]
+  double distance = 50.0; // distância entre os nós [metros]
+  double frequency = 5.0; // frequência utilizada [GHz]
+  int mcs = -1; // definição do MCS: -1 para percorrer de 0 a 11 ou 'x', onde a simulação roda para apenas o MCS 'x'
+  double minExpectedThroughput = 0; // valores máximo e mínimo para vazão esperada
   double maxExpectedThroughput = 0;
-
+  
+  // Definição dos parâmetros de simulação via linha de comando
   CommandLine cmd;
   cmd.AddValue ("frequency", "Whether working in the 2.4 or 5.0 GHz band (other values gets rejected)", frequency);
   cmd.AddValue ("distance", "Distance in meters between the station and the access point", distance);
@@ -82,11 +108,13 @@ int main (int argc, char *argv[])
   cmd.AddValue ("maxExpectedThroughput", "if set, simulation fails if the highest throughput is above this value", maxExpectedThroughput);
   cmd.Parse (argc,argv);
 
+  // Configuração do mecanismo de redução de colisão: RTS
   if (useRts)
     {
       Config::SetDefault ("ns3::WifiRemoteStationManager::RtsCtsThreshold", StringValue ("0"));
     }
 
+  // Configuração para percorrer os valores de MCS com base nos valores já calculados
   double prevThroughput [12];
   for (uint32_t l = 0; l < 12; l++)
     {
@@ -100,38 +128,41 @@ int main (int argc, char *argv[])
       minMcs = mcs;
       maxMcs = mcs;
     }
-  for (int mcs = minMcs; mcs <= maxMcs; mcs++)
+  for (int mcs = minMcs; mcs <= maxMcs; mcs++) // Seleção do MCS
     {
       uint8_t index = 0;
       double previous = 0;
       uint8_t maxChannelWidth = frequency == 2.4 ? 40 : 160;
-      for (int channelWidth = 20; channelWidth <= maxChannelWidth; ) //MHz
+      for (int channelWidth = 20; channelWidth <= maxChannelWidth; ) // Seleção da largura de banda [MHz]
         {
-          for (int gi = 3200; gi >= 800; ) //Nanoseconds
+          for (int gi = 3200; gi >= 800; ) // Seleção do Intervalo de Guarda [ns]
             {
-              uint32_t payloadSize; //1500 byte IP packet
+              uint32_t payloadSize; // tamanho do pacote: 1500 bytes
               if (udp)
                 {
-                  payloadSize = 1472; //bytes
+                  payloadSize = 1472; // bytes
                 }
               else
                 {
-                  payloadSize = 1448; //bytes
+                  payloadSize = 1448; // bytes
                   Config::SetDefault ("ns3::TcpSocket::SegmentSize", UintegerValue (payloadSize));
                 }
-
+              
+              // Define os nós STA e AP
               NodeContainer wifiStaNode;
               wifiStaNode.Create (1);
               NodeContainer wifiApNode;
               wifiApNode.Create (1);
 
+              // Criação do canal
               YansWifiChannelHelper channel = YansWifiChannelHelper::Default ();
               YansWifiPhyHelper phy = YansWifiPhyHelper::Default ();
               phy.SetChannel (channel.Create ());
 
-              // Set guard interval
+              // Define o intervalo de guarda
               phy.Set ("GuardInterval", TimeValue (NanoSeconds (gi)));
 
+              // Configuração da MAC layer
               WifiMacHelper mac;
               WifiHelper wifi;
               if (frequency == 5.0)
@@ -149,6 +180,7 @@ int main (int argc, char *argv[])
                   return 0;
                 }
 
+              // Configuração dos dispositivos
               std::ostringstream oss;
               oss << "HeMcs" << mcs;
               wifi.SetRemoteStationManager ("ns3::ConstantRateWifiManager","DataMode", StringValue (oss.str ()),
@@ -169,10 +201,10 @@ int main (int argc, char *argv[])
               NetDeviceContainer apDevice;
               apDevice = wifi.Install (phy, mac, wifiApNode);
 
-              // Set channel width
+              // Define a largura do canal
               Config::Set ("/NodeList/*/DeviceList/*/$ns3::WifiNetDevice/Phy/ChannelWidth", UintegerValue (channelWidth));
 
-              // mobility.
+              // Configuração de mobilidade dos objetos que caracterizam os dispositivos
               MobilityHelper mobility;
               Ptr<ListPositionAllocator> positionAlloc = CreateObject<ListPositionAllocator> ();
 
@@ -180,29 +212,29 @@ int main (int argc, char *argv[])
               positionAlloc->Add (Vector (distance, 0.0, 0.0));
               mobility.SetPositionAllocator (positionAlloc);
 
+              // Modelo em que a posição atual não é alterada quando já foi configurada a não ser que seja reconfigurada
               mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
-
               mobility.Install (wifiApNode);
               mobility.Install (wifiStaNode);
 
-              /* Internet stack*/
+
+              // Configura pilha de protocolos IP
+              // A classe InternetStackHelper agrega funcionalidades IP/TCP/UDP aos nós
               InternetStackHelper stack;
               stack.Install (wifiApNode);
               stack.Install (wifiStaNode);
-
               Ipv4AddressHelper address;
               address.SetBase ("192.168.1.0", "255.255.255.0");
               Ipv4InterfaceContainer staNodeInterface;
               Ipv4InterfaceContainer apNodeInterface;
-
               staNodeInterface = address.Assign (staDevice);
               apNodeInterface = address.Assign (apDevice);
 
-              /* Setting applications */
+              // Configuração da aplicação
               ApplicationContainer serverApp;
               if (udp)
                 {
-                  //UDP flow
+                  // UDP flow
                   uint16_t port = 9;
                   UdpServerHelper server (port);
                   serverApp = server.Install (wifiStaNode.Get (0));
@@ -219,7 +251,7 @@ int main (int argc, char *argv[])
                 }
               else
                 {
-                  //TCP flow
+                  // TCP flow
                   uint16_t port = 50000;
                   Address localAddress (InetSocketAddress (Ipv4Address::GetAny (), port));
                   PacketSinkHelper packetSinkHelper ("ns3::TcpSocketFactory", localAddress);
@@ -241,6 +273,7 @@ int main (int argc, char *argv[])
 
               Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
 
+              // Configura a utilização do monitoramento com Flow Monitor
               Ptr<FlowMonitor> flowMonitor;
               FlowMonitorHelper flowHelper;
               flowMonitor = flowHelper.InstallAll();
@@ -263,7 +296,7 @@ int main (int argc, char *argv[])
 
               std::cout << mcs << "\t\t\t" << channelWidth << " MHz\t\t\t" << gi << " ns\t\t\t" << throughput << " Mbit/s" << std::endl;
 
-              //test first element
+              // Confere o primeiro elemento p/ possível erro
               if (mcs == 0 && channelWidth == 20 && gi == 3200)
                 {
                   if (throughput < minExpectedThroughput)
@@ -272,7 +305,7 @@ int main (int argc, char *argv[])
                       exit (1);
                     }
                 }
-              //test last element
+              // Confere o último elemento p/ possível erro
               if (mcs == 11 && channelWidth == 160 && gi == 800)
                 {
                   if (maxExpectedThroughput > 0 && throughput > maxExpectedThroughput)
@@ -281,7 +314,7 @@ int main (int argc, char *argv[])
                       exit (1);
                     }
                 }
-              //test previous throughput is smaller (for the same mcs)
+              // Confere se o valor anterior de vazão era menor para o mesmo MCS
               if (throughput > previous)
                 {
                   previous = throughput;
@@ -291,7 +324,7 @@ int main (int argc, char *argv[])
                   NS_LOG_ERROR ("Obtained throughput " << throughput << " is not expected!");
                   exit (1);
                 }
-              //test previous throughput is smaller (for the same channel width and GI)
+              // Confere se o valor anterior de vazão era menor para mesma BW e GI
               if (throughput > prevThroughput [index])
                 {
                   prevThroughput [index] = throughput;
